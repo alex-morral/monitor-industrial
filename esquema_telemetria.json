@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TelemetriaMonitorIndustrial",
+  "description": "Contrato de datos v1.0 — Industrial Power & Thermal Monitor (ESP32)",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["meta", "potencia", "termico", "estado"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "description": "Metadatos de identificación y salud del dispositivo",
+      "required": ["id_dispositivo", "tiempo_encendido_s", "watchdog_reiniciado"],
+      "properties": {
+        "id_dispositivo": {
+          "type": "string",
+          "description": "Identificador único del nodo embebido",
+          "example": "MON-001",
+          "pattern": "^MON-[0-9]{3}$"
+        },
+        "tiempo_encendido_s": {
+          "type": "integer",
+          "description": "Segundos transcurridos desde el último encendido/reset (uptime)",
+          "minimum": 0,
+          "example": 3742
+        },
+        "watchdog_reiniciado": {
+          "type": "boolean",
+          "description": "TRUE si el arranque actual fue causado por disparo del Hardware Watchdog (WDT)",
+          "example": false
+        }
+      }
+    },
+    "potencia": {
+      "type": "object",
+      "description": "Parámetros eléctricos — valores simulados mediante modelo matemático en firmware",
+      "required": ["voltaje_entrada", "voltaje_salida", "corriente_salida", "eficiencia_calculada_pct"],
+      "properties": {
+        "voltaje_entrada": {
+          "type": "number",
+          "description": "Tensión de entrada nominal simulada [V] (48V bus DC)",
+          "minimum": 0,
+          "maximum": 60,
+          "example": 48.12
+        },
+        "voltaje_salida": {
+          "type": "number",
+          "description": "Tensión de salida regulada simulada [V] (12V rail)",
+          "minimum": 0,
+          "maximum": 15,
+          "example": 11.98
+        },
+        "corriente_salida": {
+          "type": "number",
+          "description": "Corriente de salida simulada [A]",
+          "minimum": 0,
+          "maximum": 20,
+          "example": 4.87
+        },
+        "eficiencia_calculada_pct": {
+          "type": "number",
+          "description": "Eficiencia calculada por modelo [%]. Decrece con la temperatura del disipador: η = 92% - 0.25*(T - 25°C)",
+          "minimum": 0,
+          "maximum": 100,
+          "example": 88.5
+        }
+      }
+    },
+    "termico": {
+      "type": "object",
+      "description": "Lecturas del subsistema de gestión térmica",
+      "required": ["temp_disipador_c", "temp_ambiente_c"],
+      "properties": {
+        "temp_disipador_c": {
+          "type": "number",
+          "description": "Temperatura del disipador [°C] — sensor digital DS18B20 con filtro media móvil (N=10)",
+          "minimum": -10,
+          "maximum": 125,
+          "example": 57.3
+        },
+        "temp_ambiente_c": {
+          "type": "number",
+          "description": "Temperatura ambiente [°C] — sensor DHT11/DHT22",
+          "minimum": -40,
+          "maximum": 80,
+          "example": 24.5
+        }
+      }
+    },
+    "estado": {
+      "type": "object",
+      "description": "Estado del sistema de protección activa",
+      "required": ["rele_activo", "proteccion_termica_disparada"],
+      "properties": {
+        "rele_activo": {
+          "type": "boolean",
+          "description": "TRUE cuando el relé de corte de carga está energizado (carga desconectada)",
+          "example": false
+        },
+        "proteccion_termica_disparada": {
+          "type": "boolean",
+          "description": "TRUE si la protección térmica por hardware está activa (T_dis > 28°C). Reset automático al bajar de 25°C (histéresis de 3°C).",
+          "example": false
+        }
+      }
+    }
+  },
+  "example_payload": {
+    "meta": {
+      "id_dispositivo": "MON-001",
+      "tiempo_encendido_s": 3742,
+      "watchdog_reiniciado": false
+    },
+    "potencia": {
+      "voltaje_entrada": 48.12,
+      "voltaje_salida": 11.98,
+      "corriente_salida": 4.87,
+      "eficiencia_calculada_pct": 88.5
+    },
+    "termico": {
+      "temp_disipador_c": 57.3,
+      "temp_ambiente_c": 24.5
+    },
+    "estado": {
+      "rele_activo": false,
+      "proteccion_termica_disparada": false
+    }
+  }
+}

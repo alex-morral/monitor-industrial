@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Industrial Power & Thermal Monitor — ESP32 + MQTT</title>
+
+  <!-- Fuentes industriales -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Librerías -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.49.0/dist/apexcharts.min.js"></script>
+
+  <style>
+    /* ═══════════════════════════════════════
+       VARIABLES Y RESET
+    ═══════════════════════════════════════ */
+    :root {
+      --bg0:        #060a0f;
+      --bg1:        #0d1117;
+      --bg2:        #131920;
+      --border:     #1e2d3d;
+      --border2:    #243447;
+      --txt-hi:     #e6edf3;
+      --txt-lo:     #7d8590;
+      --txt-dim:    #3d5068;
+      --green:      #00e676;
+      --green-dim:  rgba(0,230,118,.12);
+      --red:        #ff1744;
+      --red-dim:    rgba(255,23,68,.15);
+      --amber:      #ffa726;
+      --amber-dim:  rgba(255,167,38,.12);
+      --cyan:       #00bcd4;
+      --blue:       #29b6f6;
+      --purple:     #7c4dff;
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg0);
+      color: var(--txt-hi);
+      min-height: 100vh;
+      padding-bottom: 40px;
+    }
+
+    /* ═══════════════════════════════════════
+       HEADER
+    ═══════════════════════════════════════ */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .header-brand { display: flex; align-items: center; gap: 14px; }
+
+    .brand-icon {
+      width: 38px; height: 38px;
+      background: linear-gradient(135deg, var(--cyan), var(--blue));
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 700; color: #000; font-family: 'JetBrains Mono', monospace;
+    }
+
+    .brand-text .sup-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; color: var(--cyan); letter-spacing: 3px; text-transform: uppercase;
+    }
+    .brand-text h1 { font-size: 15px; font-weight: 600; color: var(--txt-hi); }
+
+    .header-badges {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+
+    .badge {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: var(--txt-lo);
+    }
+
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--txt-dim);
+      flex-shrink: 0;
+    }
+    .dot.online  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot.offline { background: var(--red); }
+
+    @keyframes dotPulse {
+      0%,100% { opacity: 1; box-shadow: 0 0 4px var(--green); }
+      50%      { opacity: .5; box-shadow: 0 0 10px var(--green); }
+    }
+    .dot.online { animation: dotPulse 2s ease-in-out infinite; }
+
+    /* ═══════════════════════════════════════
+       LAYOUT PRINCIPAL
+    ═══════════════════════════════════════ */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 2fr;
+      grid-template-rows: auto;
+      gap: 14px;
+      padding: 14px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* ═══════════════════════════════════════
+       CARD BASE
+    ═══════════════════════════════════════ */
+    .card {
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+
+    .card-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: var(--txt-lo);
+      text-transform: uppercase; letter-spacing: 2px;
+    }
+
+    .card-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: var(--cyan);
+      border: 1px solid var(--border2);
+      padding: 2px 7px; border-radius: 3px;
+    }
+
+    .card-body { padding: 12px; }
+
+    /* ═══════════════════════════════════════
+       FILA 1: GAUGES + HISTÓRICO
+    ═══════════════════════════════════════ */
+    .gauge-card   { grid-column: span 1; }
+    .history-card { grid-column: span 1; }  /* ocupa la columna 2fr */
+
+    /* ═══════════════════════════════════════
+       FILA 2: STATUS INDICATORS
+    ═══════════════════════════════════════ */
+    .status-row {
+      grid-column: span 3;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+    }
+
+    .status-card {
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px 16px;
+      text-align: center;
+      transition: border-color .3s, box-shadow .3s, background .3s;
+    }
+
+    .status-card .s-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; color: var(--txt-lo);
+      text-transform: uppercase; letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+
+    .status-card .s-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 20px; font-weight: 700;
+      color: var(--txt-hi);
+      transition: color .3s;
+    }
+
+    .status-card .s-sub {
+      font-size: 11px; color: var(--txt-dim);
+      margin-top: 6px; font-family: 'JetBrains Mono', monospace;
+    }
+
+    .status-card.ok      { border-color: var(--green); background: var(--green-dim); }
+    .status-card.ok      .s-value { color: var(--green); }
+    .status-card.alarm   { border-color: var(--red);   background: var(--red-dim); }
+    .status-card.alarm   .s-value { color: var(--red); }
+    .status-card.warning { border-color: var(--amber); background: var(--amber-dim); }
+    .status-card.warning .s-value { color: var(--amber); }
+
+    @keyframes alarmPulse {
+      0%,100% { box-shadow: 0 0 12px var(--red-dim); }
+      50%      { box-shadow: 0 0 32px rgba(255,23,68,.4); }
+    }
+    .status-card.alarm { animation: alarmPulse 1s ease-in-out infinite; }
+
+    /* ═══════════════════════════════════════
+       FILA 3: MÉTRICAS DE POTENCIA
+    ═══════════════════════════════════════ */
+    .power-row {
+      grid-column: span 3;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+
+    .metric-card {
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: var(--accent, var(--border));
+    }
+
+    .metric-card.v-in  { --accent: var(--cyan); }
+    .metric-card.v-out { --accent: var(--green); }
+    .metric-card.i-out { --accent: var(--amber); }
+    .metric-card.p-out { --accent: var(--blue); }
+
+    .m-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; color: var(--txt-lo);
+      text-transform: uppercase; letter-spacing: 2px;
+      margin-bottom: 8px;
+    }
+
+    .m-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 30px; font-weight: 700;
+    }
+
+    .m-unit {
+      font-size: 14px; font-weight: 400;
+      color: var(--txt-lo); margin-left: 3px;
+    }
+
+    .m-desc {
+      font-size: 10px; color: var(--txt-dim);
+      margin-top: 6px; font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ═══════════════════════════════════════
+       FOOTER
+    ═══════════════════════════════════════ */
+    .footer {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--bg1);
+      border-top: 1px solid var(--border);
+      padding: 5px 20px;
+      display: flex; justify-content: space-between; align-items: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: var(--txt-dim);
+      z-index: 50;
+    }
+
+    /* ═══════════════════════════════════════
+       WDT BANNER
+    ═══════════════════════════════════════ */
+    .wdt-banner {
+      display: none;
+      grid-column: span 3;
+      background: rgba(255,23,68,.1);
+      border: 1px solid var(--red);
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--red);
+      text-align: center;
+      letter-spacing: 1px;
+    }
+
+    .wdt-banner.visible { display: block; }
+
+    /* Scrollbar custom */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg0); }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+    /* ═══════════════════════════════════════
+       BOTONES DE CONTROL (panel extra)
+    ═══════════════════════════════════════ */
+    .cmd-panel {
+      grid-column: span 3;
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      padding: 12px 16px;
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .cmd-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; color: var(--txt-lo);
+      text-transform: uppercase; letter-spacing: 2px;
+      margin-right: 8px;
+    }
+
+    .btn {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; font-weight: 600;
+      padding: 7px 16px;
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      cursor: pointer;
+      background: var(--bg2);
+      color: var(--txt-hi);
+      transition: all .2s;
+    }
+    .btn:hover { border-color: var(--cyan); color: var(--cyan); }
+    .btn.danger { border-color: var(--red); color: var(--red); }
+    .btn.danger:hover { background: var(--red-dim); }
+  </style>
+</head>
+
+<body>
+
+<!-- ═══════════════════════════════════════ HEADER ══ -->
+<header class="header">
+  <div class="header-brand">
+    <div class="brand-icon">⚡</div>
+    <div class="brand-text">
+      <div class="sup-label">Embedded Systems · ESP32 + MQTT + Node.js</div>
+      <h1>Industrial Power & Thermal Monitor</h1>
+    </div>
+  </div>
+  <div class="header-badges">
+    <div class="badge">
+      <div class="dot" id="dot-ws"></div>
+      <span id="lbl-ws">WebSocket</span>
+    </div>
+    <div class="badge">
+      <div class="dot" id="dot-mqtt"></div>
+      <span id="lbl-mqtt">MQTT Broker</span>
+    </div>
+    <div class="badge" id="badge-device">
+      <span id="lbl-device">DEV: ---</span>
+    </div>
+    <div class="badge">
+      <span id="lbl-clock" style="color:var(--txt-hi);">--:--:--</span>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════ GRID ════ -->
+<div class="grid">
+
+  <!-- WDT Banner (visible si watchdog disparó) -->
+  <div class="wdt-banner" id="wdt-banner">
+    ⚠ ALERTA: EL SISTEMA FUE REINICIADO POR DISPARO DEL HARDWARE WATCHDOG (WDT)
+  </div>
+
+  <!-- ── Gauge: Temperatura Disipador ── -->
+  <div class="card gauge-card">
+    <div class="card-header">
+      <span class="card-title">Temperatura Disipador</span>
+      <span class="card-tag">DS18B20 · MA(10)</span>
+    </div>
+    <div class="card-body">
+      <div id="gauge-temp-dis"></div>
+    </div>
+  </div>
+
+  <!-- ── Gauge: Eficiencia ── -->
+  <div class="card gauge-card">
+    <div class="card-header">
+      <span class="card-title">Eficiencia Simulada</span>
+      <span class="card-tag">MODELO · η(%)</span>
+    </div>
+    <div class="card-body">
+      <div id="gauge-eficiencia"></div>
+    </div>
+  </div>
+
+  <!-- ── Gráfica Histórica ── -->
+  <div class="card history-card">
+    <div class="card-header">
+      <span class="card-title">Histórico Térmico — últimos 5 min</span>
+      <div style="display:flex;gap:14px;">
+        <span style="font-family:monospace;font-size:10px;color:#ff4560">▬ Disipador</span>
+        <span style="font-family:monospace;font-size:10px;color:#29b6f6">▬ Ambiente</span>
+      </div>
+    </div>
+    <div class="card-body" style="padding:8px 4px;">
+      <div id="chart-historico"></div>
+    </div>
+  </div>
+
+  <!-- ── Fila de Estado ── -->
+  <div class="status-row">
+
+    <div class="status-card" id="card-rele">
+      <div class="s-label">Estado Relé</div>
+      <div class="s-value" id="val-rele">---</div>
+      <div class="s-sub" id="sub-rele">Carga: ---</div>
+    </div>
+
+    <div class="status-card" id="card-prot">
+      <div class="s-label">Protección Térmica</div>
+      <div class="s-value" id="val-prot">---</div>
+      <div class="s-sub">Umbral: 60°C / 50°C</div>
+    </div>
+
+    <div class="status-card" id="card-wdt">
+      <div class="s-label">Watchdog Status</div>
+      <div class="s-value" id="val-wdt">---</div>
+      <div class="s-sub" id="sub-wdt">Timeout: 5s</div>
+    </div>
+
+    <div class="status-card" id="card-uptime">
+      <div class="s-label">Device Uptime</div>
+      <div class="s-value" id="val-uptime">---</div>
+      <div class="s-sub" id="sub-uptime">desde último reset</div>
+    </div>
+
+    <div class="status-card" id="card-tamb">
+      <div class="s-label">Temperatura Ambiente</div>
+      <div class="s-value" id="val-tamb">---</div>
+      <div class="s-sub">Sensor DHT11/22</div>
+    </div>
+
+  </div>
+
+  <!-- ── Métricas de Potencia ── -->
+  <div class="power-row">
+
+    <div class="metric-card v-in">
+      <div class="m-label">Voltaje Entrada</div>
+      <div class="m-value" style="color:var(--cyan)">
+        <span id="val-vin">--.-</span><span class="m-unit">V</span>
+      </div>
+      <div class="m-desc">Bus DC · Nominal 48V</div>
+    </div>
+
+    <div class="metric-card v-out">
+      <div class="m-label">Voltaje Salida</div>
+      <div class="m-value" style="color:var(--green)">
+        <span id="val-vout">--.-</span><span class="m-unit">V</span>
+      </div>
+      <div class="m-desc">Rail regulado · Nominal 12V</div>
+    </div>
+
+    <div class="metric-card i-out">
+      <div class="m-label">Corriente Salida</div>
+      <div class="m-value" style="color:var(--amber)">
+        <span id="val-iout">-.-</span><span class="m-unit">A</span>
+      </div>
+      <div class="m-desc">Carga activa · Nominal 5A</div>
+    </div>
+
+    <div class="metric-card p-out">
+      <div class="m-label">Potencia Entregada</div>
+      <div class="m-value" style="color:var(--blue)">
+        <span id="val-pout">--.-</span><span class="m-unit">W</span>
+      </div>
+      <div class="m-desc">P = V_out × I_out</div>
+    </div>
+
+  </div>
+
+  <!-- ── Panel de Comandos ── -->
+  <div class="cmd-panel">
+    <span class="cmd-label">Comandos MQTT →</span>
+    <button class="btn" onclick="enviarCmd('STATUS')">STATUS</button>
+    <button class="btn" onclick="enviarCmd('RESET_PROTECCION')">RESET PROTECCIÓN</button>
+    <button class="btn danger" onclick="confirmarWDT()">⚠ FORCE WDT TEST</button>
+    <span id="cmd-feedback" style="font-family:monospace;font-size:11px;color:var(--txt-lo);margin-left:8px;"></span>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════ FOOTER ══ -->
+<footer class="footer">
+  <span>Industrial Power & Thermal Monitor v1.0 · ESP32 · MQTT broker.hivemq.com</span>
+  <span id="lbl-timestamp">Esperando datos...</span>
+</footer>
+
+
+<script>
+'use strict';
+
+// ═══════════════════════════════════════
+//  CONFIGURACIÓN
+// ═══════════════════════════════════════
+const MAX_HISTORY = 300;  // 5 min × 1 Hz
+
+// ═══════════════════════════════════════
+//  DATOS HISTÓRICOS
+// ═══════════════════════════════════════
+let hist = { dis: [], amb: [], labels: [] };
+
+// ═══════════════════════════════════════
+//  RELOJ EN HEADER
+// ═══════════════════════════════════════
+setInterval(() => {
+  document.getElementById('lbl-clock').textContent =
+    new Date().toLocaleTimeString('es-ES', { hour12: false });
+}, 1000);
+
+// ═══════════════════════════════════════
+//  APEXCHARTS — GAUGE TEMPERATURA
+// ═══════════════════════════════════════
+const gaugeBaseOpts = {
+  chart: {
+    type: 'radialBar',
+    height: 240,
+    background: 'transparent',
+    animations: { enabled: true, easing: 'easeinout', speed: 600 },
+  },
+  plotOptions: {
+    radialBar: {
+      startAngle: -135,
+      endAngle:    135,
+      track: {
+        background: '#1e2d3d',
+        strokeWidth: '65%',
+        margin: 5,
+      },
+      dataLabels: {
+        name: {
+          show: true,
+          color: '#7d8590',
+          fontSize: '12px',
+          offsetY: 18,
+        },
+        value: {
+          show: true,
+          color: '#e6edf3',
+          fontSize: '30px',
+          fontWeight: 700,
+          fontFamily: "'JetBrains Mono', monospace",
+          offsetY: -10,
+        },
+      },
+      hollow: { size: '56%' },
+    },
+  },
+  stroke: { lineCap: 'round' },
+  theme: { mode: 'dark' },
+};
+
+// Gauge temperatura (rango 0-100°C → 0-100%)
+const gaugeTemp = new ApexCharts(
+  document.getElementById('gauge-temp-dis'),
+  {
+    ...gaugeBaseOpts,
+    series: [0],
+    labels: ['Temp. Disipador'],
+    fill: {
+      type: 'gradient',
+      gradient: {
+        shade: 'dark', type: 'horizontal',
+        colorStops: [
+          { offset: 0,   color: '#00e676' },
+          { offset: 55,  color: '#ffa726' },
+          { offset: 100, color: '#ff1744' },
+        ],
+      },
+    },
+    plotOptions: {
+      radialBar: {
+        ...gaugeBaseOpts.plotOptions.radialBar,
+        dataLabels: {
+          ...gaugeBaseOpts.plotOptions.radialBar.dataLabels,
+          value: {
+            ...gaugeBaseOpts.plotOptions.radialBar.dataLabels.value,
+            formatter: (val) => val.toFixed(1) + '°C',
+          },
+        },
+      },
+    },
+  }
+);
+gaugeTemp.render();
+
+// Gauge eficiencia (0-100%)
+const gaugeEf = new ApexCharts(
+  document.getElementById('gauge-eficiencia'),
+  {
+    ...gaugeBaseOpts,
+    series: [0],
+    labels: ['Eficiencia η'],
+    fill: {
+      type: 'gradient',
+      gradient: {
+        shade: 'dark', type: 'horizontal',
+        colorStops: [
+          { offset: 0,   color: '#ff1744' },
+          { offset: 40,  color: '#ffa726' },
+          { offset: 100, color: '#00e676' },
+        ],
+      },
+    },
+    plotOptions: {
+      radialBar: {
+        ...gaugeBaseOpts.plotOptions.radialBar,
+        dataLabels: {
+          ...gaugeBaseOpts.plotOptions.radialBar.dataLabels,
+          value: {
+            ...gaugeBaseOpts.plotOptions.radialBar.dataLabels.value,
+            formatter: (val) => val.toFixed(1) + '%',
+          },
+        },
+      },
+    },
+  }
+);
+gaugeEf.render();
+
+// ═══════════════════════════════════════
+//  APEXCHARTS — GRÁFICA HISTÓRICA
+// ═══════════════════════════════════════
+const chartHist = new ApexCharts(
+  document.getElementById('chart-historico'),
+  {
+    chart: {
+      type: 'line',
+      height: 220,
+      background: 'transparent',
+      toolbar: { show: false },
+      animations: { enabled: false },  // Desactivado para rendimiento en 1Hz
+      zoom: { enabled: false },
+    },
+    stroke: { curve: 'smooth', width: [2, 2] },
+    series: [
+      { name: 'Disipador (°C)', data: [] },
+      { name: 'Ambiente (°C)',  data: [] },
+    ],
+    colors: ['#ff4560', '#29b6f6'],
+    xaxis: {
+      categories: [],
+      labels: {
+        show: true,
+        rotate: 0,
+        style: { colors: '#3d5068', fontSize: '9px', fontFamily: 'JetBrains Mono' },
+        // Mostrar solo cada 30 etiquetas (~30s)
+        formatter: (val, idx) => (idx % 30 === 0 ? val : ''),
+      },
+      axisBorder: { color: '#1e2d3d' },
+      axisTicks:  { color: '#1e2d3d' },
+    },
+    yaxis: {
+      min: 0, max: 80,
+      labels: {
+        style: { colors: '#7d8590', fontSize: '10px', fontFamily: 'JetBrains Mono' },
+        formatter: (v) => v.toFixed(0) + '°',
+      },
+    },
+    grid: {
+      borderColor: '#1e2d3d',
+      strokeDashArray: 4,
+    },
+    legend: {
+      labels: { colors: '#7d8590' },
+      fontFamily: 'JetBrains Mono',
+      fontSize: '10px',
+    },
+    tooltip: {
+      theme: 'dark',
+      y: { formatter: (v) => v.toFixed(1) + ' °C' },
+    },
+    theme: { mode: 'dark' },
+  }
+);
+chartHist.render();
+
+// ═══════════════════════════════════════
+//  HELPER — FORMATEAR UPTIME
+// ═══════════════════════════════════════
+function formatUptime(s) {
+  if (s == null) return '---';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+// ═══════════════════════════════════════
+//  ACTUALIZAR DASHBOARD
+// ═══════════════════════════════════════
+let wdt_count_prev = -1;
+
+function actualizarDashboard(d) {
+  const meta    = d.meta    || {};
+  const pot     = d.potencia || {};
+  const ter     = d.termico  || {};
+  const est     = d.estado   || {};
+
+  const t_dis  = parseFloat(ter.temp_disipador_c) || 0;
+  const t_amb  = parseFloat(ter.temp_ambiente_c)  || 0;
+  const ef     = parseFloat(pot.eficiencia_calculada_pct) || 0;
+  const v_in   = parseFloat(pot.voltaje_entrada)   || 0;
+  const v_out  = parseFloat(pot.voltaje_salida)    || 0;
+  const i_out  = parseFloat(pot.corriente_salida)  || 0;
+  const p_out  = v_out * i_out;
+  const uptime = meta.tiempo_encendido_s ?? 0;
+  const wdt_on = meta.watchdog_reiniciado === true;
+  const rele   = est.rele_activo === true;
+  const prot   = est.proteccion_termica_disparada === true;
+
+  // ── Gauges
+  gaugeTemp.updateSeries([parseFloat(t_dis.toFixed(1))]);
+  gaugeEf.updateSeries([parseFloat(ef.toFixed(1))]);
+
+  // ── Historial
+  const label = new Date().toLocaleTimeString('es-ES', { hour12: false });
+  hist.dis.push(parseFloat(t_dis.toFixed(1)));
+  hist.amb.push(parseFloat(t_amb.toFixed(1)));
+  hist.labels.push(label);
+  if (hist.dis.length > MAX_HISTORY) {
+    hist.dis.shift(); hist.amb.shift(); hist.labels.shift();
+  }
+  chartHist.updateOptions({ xaxis: { categories: hist.labels } }, false, false);
+  chartHist.updateSeries([
+    { name: 'Disipador (°C)', data: hist.dis },
+    { name: 'Ambiente (°C)',  data: hist.amb },
+  ], false);
+
+  // ── Métricas de potencia
+  document.getElementById('val-vin').textContent  = v_in.toFixed(2);
+  document.getElementById('val-vout').textContent = v_out.toFixed(2);
+  document.getElementById('val-iout').textContent = i_out.toFixed(2);
+  document.getElementById('val-pout').textContent = p_out.toFixed(1);
+
+  // ── Estado Relé
+  const cardRele = document.getElementById('card-rele');
+  document.getElementById('val-rele').textContent = rele ? 'ACTIVO' : 'INACTIVO';
+  document.getElementById('sub-rele').textContent = rele ? 'Carga: DESCONECTADA' : 'Carga: CONECTADA';
+  setCardClass(cardRele, rele ? 'alarm' : 'ok');
+
+  // ── Protección Térmica
+  const cardProt = document.getElementById('card-prot');
+  document.getElementById('val-prot').textContent = prot ? 'DISPARADA' : 'SEGURO';
+  setCardClass(cardProt, prot ? 'alarm' : 'ok');
+
+  // ── WDT Banner + Card
+  document.getElementById('wdt-banner').classList.toggle('visible', wdt_on);
+  const cardWdt = document.getElementById('card-wdt');
+  document.getElementById('val-wdt').textContent = wdt_on ? 'REINICIADO' : 'NORMAL';
+  document.getElementById('sub-wdt').textContent = `Timeout: 5s | Reset: ${wdt_on ? 'SÍ' : 'NO'}`;
+  setCardClass(cardWdt, wdt_on ? 'warning' : 'ok');
+
+  // ── Uptime
+  const cardUp = document.getElementById('card-uptime');
+  document.getElementById('val-uptime').textContent = formatUptime(uptime);
+  setCardClass(cardUp, 'ok');
+
+  // ── Temp ambiente
+  const cardTamb = document.getElementById('card-tamb');
+  document.getElementById('val-tamb').textContent = t_amb.toFixed(1) + '°C';
+  const cls = t_amb > 35 ? 'alarm' : t_amb > 28 ? 'warning' : 'ok';
+  setCardClass(cardTamb, cls);
+
+  // ── Header badges
+  document.getElementById('lbl-device').textContent = `DEV: ${meta.id_dispositivo || '---'}`;
+
+  // ── Footer timestamp
+  document.getElementById('lbl-timestamp').textContent =
+    `Último dato: ${new Date().toLocaleTimeString('es-ES', { hour12: false })} | T_dis: ${t_dis.toFixed(1)}°C | η: ${ef.toFixed(1)}%`;
+}
+
+function setCardClass(el, cls) {
+  el.classList.remove('ok', 'alarm', 'warning');
+  if (cls) el.classList.add(cls);
+}
+
+// ═══════════════════════════════════════
+//  COMANDOS MQTT
+// ═══════════════════════════════════════
+function enviarCmd(cmd) {
+  socket.emit('send_cmd', cmd);
+  const fb = document.getElementById('cmd-feedback');
+  fb.textContent = `→ "${cmd}" enviado`;
+  setTimeout(() => { fb.textContent = ''; }, 3000);
+}
+
+function confirmarWDT() {
+  if (confirm('⚠ FORZAR TEST WATCHDOG\n\nEl ESP32 entrará en bucle infinito y será reiniciado por el WDT en ~5 segundos.\n\n¿Continuar?')) {
+    enviarCmd('FORCE_WDT_TEST');
+  }
+}
+
+// ═══════════════════════════════════════
+//  SOCKET.IO
+// ═══════════════════════════════════════
+const socket = io();
+
+socket.on('connect', () => {
+  document.getElementById('dot-ws').className = 'dot online';
+  document.getElementById('lbl-ws').textContent = 'WS: Online';
+});
+
+socket.on('disconnect', () => {
+  document.getElementById('dot-ws').className = 'dot offline';
+  document.getElementById('lbl-ws').textContent = 'WS: Offline';
+});
+
+socket.on('mqtt_status', ({ conectado }) => {
+  document.getElementById('dot-mqtt').className = `dot ${conectado ? 'online' : 'offline'}`;
+  document.getElementById('lbl-mqtt').textContent = `MQTT: ${conectado ? 'Online' : 'Offline'}`;
+});
+
+socket.on('telemetria', (data) => {
+  try {
+    actualizarDashboard(data);
+  } catch (e) {
+    console.error('[Dashboard] Error procesando telemetría:', e);
+  }
+});
+</script>
+
+</body>
+</html>
